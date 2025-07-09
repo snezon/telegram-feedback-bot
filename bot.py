@@ -1,20 +1,21 @@
+import os
 import telebot
-import openai
+import requests
 import threading
 import time
 from datetime import datetime
 
-# 🔐 Токены
-TELEGRAM_TOKEN = "Token"
-OPENAI_API_KEY = "OPENAI_API_KEY"
+# Получаем токен из переменных окружения
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 
-import requests
-
+# Инициализация бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
+# Хранилище сообщений
 forwarded_messages = []
-group_messages = []
+group_messages = {}
 
+# Функция отправки запроса в n8n + OpenAI
 def ask_openai(prompt):
     try:
         response = requests.post(
@@ -26,7 +27,7 @@ def ask_openai(prompt):
     except Exception as e:
         return f"⚠️ Ошибка от n8n: {str(e)}"
 
-
+# Обработка пересланных сообщений в личку
 @bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text)
 def handle_forward(msg):
     sender = msg.forward_sender_name or \
@@ -51,6 +52,7 @@ def handle_forward(msg):
         bot.reply_to(msg, f"🧠 Анализ:\n\n{reply}")
         forwarded_messages.clear()
 
+# Сбор сообщений из группового чата
 @bot.message_handler(func=lambda msg: msg.chat.type in ['group', 'supergroup'] and msg.text)
 def collect_group(msg):
     if msg.chat.id not in group_messages:
@@ -60,6 +62,7 @@ def collect_group(msg):
         "text": msg.text
     })
 
+# Команда для анализа по запросу
 @bot.message_handler(commands=['analyze'])
 def analyze_chat(msg):
     chat_id = msg.chat.id
@@ -85,6 +88,7 @@ def analyze_chat(msg):
     bot.send_message(chat_id, f"📊 Анализ:\n\n{reply}")
     group_messages[chat_id] = []
 
+# Ежедневный автоотчёт в 23:59
 def daily_report():
     while True:
         now = datetime.now()
@@ -111,6 +115,7 @@ def daily_report():
         else:
             time.sleep(20)
 
+# Запуск бота
 print("✅ Бот запущен")
 threading.Thread(target=daily_report, daemon=True).start()
 bot.infinity_polling()
