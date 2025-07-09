@@ -8,25 +8,24 @@ from datetime import datetime
 TELEGRAM_TOKEN = "Token"
 OPENAI_API_KEY = "OPENAI_API_KEY"
 
-openai.api_key = OPENAI_API_KEY
+import requests
+
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
 forwarded_messages = []
-group_messages = {}
+group_messages = []
 
 def ask_openai(prompt):
     try:
-        response = openai.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            messages=[
-                {"role": "system", "content": "Ты — эксперт по коммуникации. Отвечай строго на русском языке. Проанализируй диалог по тону, стилю, конфликтам, примерам фраз и рекомендациям."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5
+        response = requests.post(
+            "https://n8n-lat.solowey.ru/webhook/c15cba7e-615e-4494-ba01-decf742c8c7c",
+            json={"prompt": prompt},
+            timeout=20
         )
-        return response.choices[0].message.content.strip()
+        return response.text.strip()
     except Exception as e:
-        return f"⚠️ Ошибка OpenAI: {str(e)}"
+        return f"⚠️ Ошибка от n8n: {str(e)}"
+
 
 @bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text)
 def handle_forward(msg):
