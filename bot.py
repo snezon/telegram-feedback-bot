@@ -3,19 +3,17 @@ import telebot
 import requests
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Получаем токен из переменных окружения
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-
-# Инициализация бота
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Хранилище сообщений
+# Хранилища
 forwarded_messages = []
-group_messages = {}
+group_messages = {}  # chat_id: list of {sender, text, time}
 
-# Функция отправки запроса в n8n + OpenAI
+# Отправка запроса в n8n/OpenAI
 def ask_openai(prompt):
     try:
         response = requests.post(
@@ -32,7 +30,11 @@ def ask_openai(prompt):
 def handle_forward(msg):
     sender = msg.forward_sender_name or \
              (msg.forward_from_chat.title if msg.forward_from_chat else "Неизвестный источник")
-    forwarded_messages.append({"text": msg.text, "sender": sender})
+    forwarded_messages.append({
+        "text": msg.text,
+        "sender": sender,
+        "time": datetime.now()
+    })
 
     if len(forwarded_messages) >= 3:
         text = "\n\n".join([f"{m['sender']}: {m['text']}" for m in forwarded_messages[-30:]])
@@ -52,17 +54,19 @@ def handle_forward(msg):
         bot.reply_to(msg, f"🧠 Анализ:\n\n{reply}")
         forwarded_messages.clear()
 
-# Сбор сообщений из группового чата
+# Сбор сообщений в группах
 @bot.message_handler(func=lambda msg: msg.chat.type in ['group', 'supergroup'] and msg.text)
 def collect_group(msg):
-    if msg.chat.id not in group_messages:
-        group_messages[msg.chat.id] = []
-    group_messages[msg.chat.id].append({
+    chat_id = msg.chat.id
+    if chat_id not in group_messages:
+        group_messages[chat_id] = []
+    group_messages[chat_id].append({
         "sender": msg.from_user.first_name or "Аноним",
-        "text": msg.text
+        "text": msg.text,
+        "time": datetime.now()
     })
 
-# Команда для анализа по запросу
+# Команда анализа чата
 @bot.message_handler(commands=['analyze'])
 def analyze_chat(msg):
     chat_id = msg.chat.id
@@ -71,11 +75,19 @@ def analyze_chat(msg):
         bot.reply_to(msg, "⚠️ Нет сообщений для анализа.")
         return
 
-    text = "\n\n".join([f"{m['sender']}: {m['text']}" for m in messages[-30:]])
+    # Анализируем только последние 24 часа
+    cutoff = datetime.now() - timedelta(hours=24)
+    recent_messages = [m for m in messages if m["time"] > cutoff]
+
+    if not recent_messages:
+        bot.reply_to(msg, "⚠️ Нет сообщений за последние 24 часа.")
+        return
+
+    text = "\n\n".join([f"{m['sender']}: {m['text']}" for m in recent_messages])
     prompt = f"""
 Проанализируй чат:
 
-1. Общий тон.
+1. Общий тон общения.
 2. Кто конструктивен, кто нет.
 3. Были ли конфликты или предложения.
 4. Примеры фраз.
@@ -86,17 +98,19 @@ def analyze_chat(msg):
 """
     reply = ask_openai(prompt)
     bot.send_message(chat_id, f"📊 Анализ:\n\n{reply}")
-    group_messages[chat_id] = []
 
 # Ежедневный автоотчёт в 23:59
 def daily_report():
     while True:
         now = datetime.now()
         if now.hour == 23 and now.minute == 59:
+            cutoff = datetime.now() - timedelta(hours=24)
             for chat_id, messages in group_messages.items():
-                if not messages:
+                recent_messages = [m for m in messages if m["time"] > cutoff]
+                if not recent_messages:
                     continue
-                text = "\n\n".join([f"{m['sender']}: {m['text']}" for m in messages[-30:]])
+
+                text = "\n\n".join([f"{m['sender']}: {m['text']}" for m in recent_messages])
                 prompt = f"""
 Сделай итог анализа общения за день:
 
@@ -110,12 +124,11 @@ def daily_report():
 """
                 reply = ask_openai(prompt)
                 bot.send_message(chat_id, f"🌙 Итог дня:\n\n{reply}")
-                group_messages[chat_id] = []
             time.sleep(60)
         else:
             time.sleep(20)
 
-# Запуск бота
+# Запуск
 print("✅ Бот запущен")
 threading.Thread(target=daily_report, daemon=True).start()
 bot.infinity_polling()
